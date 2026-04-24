@@ -107,6 +107,7 @@ If hosted as a static site, the host serves the app code, but label processing s
 - Export uses 300 DPI raster output for reliable barcode-safe printing.
 - Settings, favorites, and the selected template are stored in `localStorage`.
 - Avery 8126 compatible half-sheet labels are the default template.
+- Some "Buy compatible labels" links are paid Amazon links. As an Amazon Associate I earn from qualifying purchases.
 
 ## Deployment
 

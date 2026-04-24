@@ -34,6 +34,7 @@ import {
   saveSettings,
 } from './settings'
 import { createPrintablePdf, renderSheetToCanvas } from './sheetRenderer'
+import { getAffiliateLinksForTemplate } from './affiliateLinks'
 import type { LabelSource, PlacementSettings, SlotSelection, TemplateDefinition } from './types'
 
 const PREVIEW_SCALE = 1.55
@@ -81,6 +82,10 @@ function App() {
   const activeTemplate = useMemo(
     () => getTemplateById(settings.templateId),
     [settings.templateId],
+  )
+  const affiliateLinks = useMemo(
+    () => getAffiliateLinksForTemplate(activeTemplate.id),
+    [activeTemplate.id],
   )
 
   const slotOptions = useMemo(() => {
@@ -632,6 +637,28 @@ function App() {
               </div>
             </dl>
           </section>
+
+          {affiliateLinks.length > 0 ? (
+            <section className="control-section affiliate-panel">
+              <h2>Buy Compatible Labels</h2>
+              <p>
+                Paid links. As an Amazon Associate I earn from qualifying purchases.
+              </p>
+              <div className="affiliate-links">
+                {affiliateLinks.map((link) => (
+                  <a
+                    href={link.url}
+                    key={link.url}
+                    target="_blank"
+                    rel="noreferrer sponsored"
+                  >
+                    <span>{link.label}</span>
+                    <small>{link.merchant}</small>
+                  </a>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </aside>
 
         <section className="preview-panel" aria-label="Sheet preview">
