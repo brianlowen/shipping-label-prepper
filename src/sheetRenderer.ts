@@ -1,6 +1,7 @@
 import { PDFDocument } from 'pdf-lib'
-import { AVERY_8126_TEMPLATE, getActiveSlots } from './template'
+import { getActiveSlots } from './template'
 import type { LabelSource, PlacementSettings, PreparedSheet, RectPt } from './types'
+import type { TemplateDefinition } from './types'
 import { getCroppedCanvas } from './labelProcessing'
 
 const EXPORT_DPI = 300
@@ -16,10 +17,11 @@ interface RenderOptions {
 export const renderSheetToCanvas = (
   canvas: HTMLCanvasElement,
   source: LabelSource | null,
+  template: TemplateDefinition,
   settings: PlacementSettings,
   options: RenderOptions,
 ) => {
-  const { page } = AVERY_8126_TEMPLATE
+  const { page } = template
   canvas.width = Math.round(page.widthPt * options.scale)
   canvas.height = Math.round(page.heightPt * options.scale)
 
@@ -38,7 +40,7 @@ export const renderSheetToCanvas = (
   }
 
   if (settings.showGuides || options.forceGuides) {
-    drawGuides(ctx)
+    drawGuides(ctx, template)
   }
 
   if (source) {
@@ -48,8 +50,8 @@ export const renderSheetToCanvas = (
       settings.cropPaddingPx,
     )
 
-    for (const slot of getActiveSlots(settings.slotMode)) {
-      drawLabelInSlot(ctx, labelCanvas, slot.rect, settings)
+    for (const slot of getActiveSlots(template, settings.slotSelection)) {
+      drawLabelInSlot(ctx, labelCanvas, template, slot.rect, settings)
     }
   }
 
@@ -58,28 +60,26 @@ export const renderSheetToCanvas = (
 
 export const createPrintablePdf = async (
   source: LabelSource,
+  template: TemplateDefinition,
   settings: PlacementSettings,
 ): Promise<PreparedSheet> => {
   const canvas = document.createElement('canvas')
-  renderSheetToCanvas(canvas, source, settings, {
+  renderSheetToCanvas(canvas, source, template, settings, {
     drawBackground: false,
     scale: EXPORT_SCALE,
   })
 
   const pngBlob = await canvasToPngBlob(canvas)
   const pdfDoc = await PDFDocument.create()
-  const page = pdfDoc.addPage([
-    AVERY_8126_TEMPLATE.page.widthPt,
-    AVERY_8126_TEMPLATE.page.heightPt,
-  ])
+  const page = pdfDoc.addPage([template.page.widthPt, template.page.heightPt])
   const pngBytes = await pngBlob.arrayBuffer()
   const png = await pdfDoc.embedPng(pngBytes)
 
   page.drawImage(png, {
     x: 0,
     y: 0,
-    width: AVERY_8126_TEMPLATE.page.widthPt,
-    height: AVERY_8126_TEMPLATE.page.heightPt,
+    width: template.page.widthPt,
+    height: template.page.heightPt,
   })
 
   const pdfBytes = await pdfDoc.save()
@@ -96,22 +96,24 @@ export const createPrintablePdf = async (
 const drawLabelInSlot = (
   ctx: CanvasRenderingContext2D,
   labelCanvas: HTMLCanvasElement,
+  template: TemplateDefinition,
   slot: RectPt,
   settings: PlacementSettings,
 ) => {
   const angle = (settings.rotationDeg * Math.PI) / 180
+  const fitAngle = (template.defaultRotationDeg * Math.PI) / 180
   const sourceWidth = labelCanvas.width
   const sourceHeight = labelCanvas.height
   const rotatedWidth =
-    Math.abs(sourceWidth * Math.cos(angle)) + Math.abs(sourceHeight * Math.sin(angle))
+    Math.abs(sourceWidth * Math.cos(fitAngle)) + Math.abs(sourceHeight * Math.sin(fitAngle))
   const rotatedHeight =
-    Math.abs(sourceWidth * Math.sin(angle)) + Math.abs(sourceHeight * Math.cos(angle))
+    Math.abs(sourceWidth * Math.sin(fitAngle)) + Math.abs(sourceHeight * Math.cos(fitAngle))
   const fitScale = Math.min(slot.width / rotatedWidth, slot.height / rotatedHeight)
   const userScale = settings.scalePercent / 100
   const finalScale = fitScale * userScale
   const centerX = slot.x + slot.width / 2 + settings.offsetXPt
   const centerYFromBottom = slot.y + slot.height / 2 + settings.offsetYPt
-  const centerY = AVERY_8126_TEMPLATE.page.heightPt - centerYFromBottom
+  const centerY = template.page.heightPt - centerYFromBottom
 
   ctx.save()
   ctx.translate(centerX, centerY)
@@ -126,14 +128,14 @@ const drawLabelInSlot = (
   ctx.restore()
 }
 
-const drawGuides = (ctx: CanvasRenderingContext2D) => {
+const drawGuides = (ctx: CanvasRenderingContext2D, template: TemplateDefinition) => {
   ctx.save()
   ctx.strokeStyle = '#2b6cb0'
   ctx.lineWidth = 0.75
   ctx.setLineDash([5, 4])
 
-  for (const slot of AVERY_8126_TEMPLATE.slots) {
-    const y = AVERY_8126_TEMPLATE.page.heightPt - slot.rect.y - slot.rect.height
+  for (const slot of template.slots) {
+    const y = template.page.heightPt - slot.rect.y - slot.rect.height
     roundRectPath(ctx, slot.rect.x, y, slot.rect.width, slot.rect.height, 5)
     ctx.stroke()
   }

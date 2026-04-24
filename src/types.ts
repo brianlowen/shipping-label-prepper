@@ -1,4 +1,4 @@
-export type SlotMode = 'top' | 'bottom' | 'both'
+export type SlotSelection = 'all' | string
 
 export interface RectPt {
   x: number
@@ -8,14 +8,28 @@ export interface RectPt {
 }
 
 export interface TemplateSlot {
-  id: Exclude<SlotMode, 'both'>
+  id: string
   name: string
   rect: RectPt
 }
 
 export interface TemplateDefinition {
   id: string
+  brand: string
   name: string
+  compatibleWith: string[]
+  category: 'parcel'
+  labelSizeIn: {
+    width: number
+    height: number
+  }
+  sheetSizeIn: {
+    width: number
+    height: number
+  }
+  labelsPerSheet: number
+  sourceUrl?: string
+  defaultRotationDeg: number
   page: {
     widthPt: number
     heightPt: number
@@ -38,7 +52,8 @@ export interface LabelSource {
 }
 
 export interface PlacementSettings {
-  slotMode: SlotMode
+  templateId: string
+  slotSelection: SlotSelection
   offsetXPt: number
   offsetYPt: number
   scalePercent: number

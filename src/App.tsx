@@ -1,46 +1,120 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent } from 'react'
+import type { ChangeEvent, DragEvent, PointerEvent } from 'react'
 import {
   ChevronDown,
   Download,
   FileText,
+  LayoutTemplate,
   Move,
   Printer,
   RefreshCcw,
   RotateCcw,
   RotateCw,
+  Search,
   SlidersHorizontal,
+  Star,
   Upload,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
 import { loadLabelSource, supportsFile } from './labelProcessing'
-import { AVERY_8126_TEMPLATE } from './template'
-import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
+import {
+  ALL_SLOTS_SELECTION,
+  TEMPLATE_CATALOG,
+  formatSize,
+  getDefaultSlotSelection,
+  getActiveSlots,
+  getTemplateById,
+} from './template'
+import {
+  getDefaultSettings,
+  loadFavoriteTemplateIds,
+  loadSettings,
+  saveFavoriteTemplateIds,
+  saveSettings,
+} from './settings'
 import { createPrintablePdf, renderSheetToCanvas } from './sheetRenderer'
-import type { LabelSource, PlacementSettings, SlotMode } from './types'
+import type { LabelSource, PlacementSettings, SlotSelection, TemplateDefinition } from './types'
 
 const PREVIEW_SCALE = 1.55
-
-const slotOptions: Array<{ value: SlotMode; label: string }> = [
-  { value: 'top', label: 'Top' },
-  { value: 'bottom', label: 'Bottom' },
-  { value: 'both', label: 'Both' },
-]
+const DEFAULT_PAGE_ZOOM = 1
 
 const formatPx = (value: number) => `${Math.round(value).toLocaleString()} px`
+const scaleHandleNames = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+type TransformDragType = 'move' | 'scale' | 'rotate'
+
+interface PreviewDragState {
+  type: TransformDragType
+  point: { xPt: number; yPt: number }
+  settings: Pick<PlacementSettings, 'offsetXPt' | 'offsetYPt' | 'scalePercent' | 'rotationDeg'>
+  anchor: { xPt: number; yPt: number }
+  distance: number
+  angleDeg: number
+}
+
+interface LabelFrame {
+  centerXPercent: number
+  centerYPercent: number
+  widthPercent: number
+  heightPercent: number
+  rotationDeg: number
+}
 
 function App() {
   const [settings, setSettings] = useState<PlacementSettings>(() => loadSettings())
+  const [favoriteTemplateIds, setFavoriteTemplateIds] = useState<string[]>(() =>
+    loadFavoriteTemplateIds(),
+  )
+  const [templateQuery, setTemplateQuery] = useState('')
   const [source, setSource] = useState<LabelSource | null>(null)
   const [status, setStatus] = useState('Ready')
   const [error, setError] = useState('')
   const [isBusy, setIsBusy] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isMovingLabel, setIsMovingLabel] = useState(false)
-  const dragStateRef = useRef<{ xPt: number; yPt: number } | null>(null)
+  const [pageZoom, setPageZoom] = useState(DEFAULT_PAGE_ZOOM)
+  const [pageRotationDeg, setPageRotationDeg] = useState(0)
+  const dragStateRef = useRef<PreviewDragState | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const activeTemplate = useMemo(
+    () => getTemplateById(settings.templateId),
+    [settings.templateId],
+  )
+
+  const slotOptions = useMemo(() => {
+    const options = activeTemplate.slots.map((slot) => ({ value: slot.id, label: slot.name }))
+    if (activeTemplate.slots.length > 1) {
+      options.push({ value: ALL_SLOTS_SELECTION, label: 'All slots' })
+    }
+
+    return options
+  }, [activeTemplate])
+
+  const selectedSlotLabel =
+    settings.slotSelection === ALL_SLOTS_SELECTION
+      ? 'All slots'
+      : activeTemplate.slots.find((slot) => slot.id === settings.slotSelection)?.name ?? 'Label'
+  const previewInstruction = 'Drag label, handles, or rotate grip'
+
+  const visibleTemplates = useMemo(() => {
+    const query = templateQuery.trim().toLowerCase()
+    const withIndex = TEMPLATE_CATALOG.map((template, index) => ({ template, index }))
+    const filtered = query
+      ? withIndex.filter(({ template }) => templateMatchesQuery(template, query))
+      : withIndex
+
+    return filtered.sort((a, b) => {
+      const aFavorite = favoriteTemplateIds.includes(a.template.id)
+      const bFavorite = favoriteTemplateIds.includes(b.template.id)
+      if (aFavorite !== bFavorite) {
+        return aFavorite ? -1 : 1
+      }
+
+      return a.index - b.index
+    })
+  }, [favoriteTemplateIds, templateQuery])
 
   const croppedSize = useMemo(() => {
     if (!source) {
@@ -53,20 +127,32 @@ function App() {
     return { width, height }
   }, [settings.cropPaddingPx, source])
 
+  const labelFrame = useMemo(() => {
+    if (!source || !croppedSize) {
+      return null
+    }
+
+    return getLabelFrame(activeTemplate, settings, croppedSize)
+  }, [activeTemplate, croppedSize, settings, source])
+
   useEffect(() => {
     saveSettings(settings)
   }, [settings])
+
+  useEffect(() => {
+    saveFavoriteTemplateIds(favoriteTemplateIds)
+  }, [favoriteTemplateIds])
 
   useEffect(() => {
     if (!canvasRef.current) {
       return
     }
 
-    renderSheetToCanvas(canvasRef.current, source, settings, {
+    renderSheetToCanvas(canvasRef.current, source, activeTemplate, settings, {
       drawBackground: true,
       scale: PREVIEW_SCALE,
     })
-  }, [settings, source])
+  }, [activeTemplate, settings, source])
 
   const updateSetting = <Key extends keyof PlacementSettings>(
     key: Key,
@@ -124,7 +210,7 @@ function App() {
     setStatus('Exporting PDF')
 
     try {
-      const prepared = await createPrintablePdf(source, settings)
+      const prepared = await createPrintablePdf(source, activeTemplate, settings)
       const link = document.createElement('a')
       link.href = prepared.url
       link.download = 'prepared-return-label.pdf'
@@ -149,7 +235,7 @@ function App() {
     setStatus('Opening print')
 
     try {
-      const prepared = await createPrintablePdf(source, settings)
+      const prepared = await createPrintablePdf(source, activeTemplate, settings)
       const frame = document.createElement('iframe')
       frame.className = 'print-frame'
       frame.src = prepared.url
@@ -172,21 +258,35 @@ function App() {
   }
 
   const resetSettings = () => {
-    setSettings(DEFAULT_SETTINGS)
+    setSettings(getDefaultSettings(activeTemplate.id))
   }
 
-  const changeScale = (delta: number) => {
+  const selectTemplate = (template: TemplateDefinition) => {
     setSettings((current) => ({
       ...current,
-      scalePercent: clamp(roundToHalf(current.scalePercent + delta), 70, 130),
+      templateId: template.id,
+      slotSelection: getDefaultSlotSelection(template),
+      offsetXPt: 0,
+      offsetYPt: 0,
+      scalePercent: 100,
+      rotationDeg: template.defaultRotationDeg,
     }))
   }
 
-  const changeRotation = (delta: number) => {
-    setSettings((current) => ({
-      ...current,
-      rotationDeg: normalizeDegrees(roundToHalf(current.rotationDeg + delta)),
-    }))
+  const toggleFavoriteTemplate = (templateId: string) => {
+    setFavoriteTemplateIds((current) =>
+      current.includes(templateId)
+        ? current.filter((id) => id !== templateId)
+        : [...current, templateId],
+    )
+  }
+
+  const changePageZoom = (delta: number) => {
+    setPageZoom((current) => clamp(Number((current + delta).toFixed(2)), 0.55, 2))
+  }
+
+  const changePageRotation = (delta: number) => {
+    setPageRotationDeg((current) => normalizeDegrees(current + delta))
   }
 
   const getPreviewPoint = (clientX: number, clientY: number) => {
@@ -197,12 +297,26 @@ function App() {
 
     const rect = canvas.getBoundingClientRect()
     return {
-      xPt: ((clientX - rect.left) / rect.width) * AVERY_8126_TEMPLATE.page.widthPt,
-      yPt: ((clientY - rect.top) / rect.height) * AVERY_8126_TEMPLATE.page.heightPt,
+      xPt: ((clientX - rect.left) / rect.width) * activeTemplate.page.widthPt,
+      yPt: ((clientY - rect.top) / rect.height) * activeTemplate.page.heightPt,
     }
   }
 
-  const handlePreviewPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const getInteractionAnchor = () => {
+    const slot = getActiveSlots(activeTemplate, settings.slotSelection)[0]
+    const xPt = slot.rect.x + slot.rect.width / 2 + settings.offsetXPt
+    const yFromBottom = slot.rect.y + slot.rect.height / 2 + settings.offsetYPt
+
+    return {
+      xPt,
+      yPt: activeTemplate.page.heightPt - yFromBottom,
+    }
+  }
+
+  const startTransformDrag = (
+    type: TransformDragType,
+    event: PointerEvent<HTMLElement>,
+  ) => {
     if (!source) {
       return
     }
@@ -212,14 +326,29 @@ function App() {
       return
     }
 
+    event.preventDefault()
+    event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
-    dragStateRef.current = point
+    const anchor = getInteractionAnchor()
+    dragStateRef.current = {
+      type,
+      point,
+      settings: {
+        offsetXPt: settings.offsetXPt,
+        offsetYPt: settings.offsetYPt,
+        scalePercent: settings.scalePercent,
+        rotationDeg: settings.rotationDeg,
+      },
+      anchor,
+      distance: Math.max(distanceBetween(point, anchor), 1),
+      angleDeg: angleBetween(anchor, point),
+    }
     setIsMovingLabel(true)
   }
 
-  const handlePreviewPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const lastPoint = dragStateRef.current
-    if (!lastPoint) {
+  const handleTransformPointerMove = (event: PointerEvent<HTMLElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState) {
       return
     }
 
@@ -228,18 +357,40 @@ function App() {
       return
     }
 
-    const dx = nextPoint.xPt - lastPoint.xPt
-    const dy = nextPoint.yPt - lastPoint.yPt
-    dragStateRef.current = nextPoint
+    if (dragState.type === 'move') {
+      const dx = nextPoint.xPt - dragState.point.xPt
+      const dy = nextPoint.yPt - dragState.point.yPt
+      dragStateRef.current = { ...dragState, point: nextPoint }
+
+      setSettings((current) => ({
+        ...current,
+        offsetXPt: clamp(roundToHalf(current.offsetXPt + dx), -144, 144),
+        offsetYPt: clamp(roundToHalf(current.offsetYPt - dy), -144, 144),
+      }))
+      return
+    }
+
+    if (dragState.type === 'scale') {
+      const nextDistance = Math.max(distanceBetween(nextPoint, dragState.anchor), 1)
+      const nextScale = dragState.settings.scalePercent * (nextDistance / dragState.distance)
+
+      setSettings((current) => ({
+        ...current,
+        scalePercent: clamp(roundToHalf(nextScale), 70, 130),
+      }))
+      return
+    }
+
+    const nextAngle = angleBetween(dragState.anchor, nextPoint)
+    const nextRotation = dragState.settings.rotationDeg + angleDelta(dragState.angleDeg, nextAngle)
 
     setSettings((current) => ({
       ...current,
-      offsetXPt: clamp(roundToHalf(current.offsetXPt + dx), -144, 144),
-      offsetYPt: clamp(roundToHalf(current.offsetYPt - dy), -144, 144),
+      rotationDeg: normalizeDegrees(roundToHalf(nextRotation)),
     }))
   }
 
-  const finishPreviewDrag = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const finishPreviewDrag = (event: PointerEvent<HTMLElement>) => {
     dragStateRef.current = null
     setIsMovingLabel(false)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -251,7 +402,7 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Avery 8126</p>
+          <p className="eyebrow">{activeTemplate.name}</p>
           <h1>Return Label Prepper</h1>
         </div>
         <div className="topbar-actions">
@@ -305,6 +456,61 @@ function App() {
           </div>
           {error ? <p className="error-text">{error}</p> : null}
 
+          <section className="control-section template-browser">
+            <div className="section-heading template-heading">
+              <LayoutTemplate size={18} aria-hidden="true" />
+              <h2>Template</h2>
+            </div>
+
+            <label className="search-row">
+              <Search size={15} aria-hidden="true" />
+              <input
+                type="search"
+                value={templateQuery}
+                placeholder="Search size, brand, code"
+                onChange={(event) => setTemplateQuery(event.target.value)}
+              />
+            </label>
+
+            <div className="template-list">
+              {visibleTemplates.map(({ template }) => {
+                const isSelected = activeTemplate.id === template.id
+                const isFavorite = favoriteTemplateIds.includes(template.id)
+
+                return (
+                  <article
+                    className={`template-card ${isSelected ? 'selected' : ''}`}
+                    key={template.id}
+                  >
+                    <button
+                      className="template-select"
+                      type="button"
+                      onClick={() => selectTemplate(template)}
+                      aria-pressed={isSelected}
+                    >
+                      <span>
+                        <strong>{template.name}</strong>
+                        <small>
+                          {formatSize(template.labelSizeIn)} · {template.labelsPerSheet} per sheet
+                        </small>
+                      </span>
+                      <em>{template.brand}</em>
+                    </button>
+                    <button
+                      className={`favorite-button ${isFavorite ? 'selected' : ''}`}
+                      type="button"
+                      title={isFavorite ? 'Remove favorite' : 'Add favorite'}
+                      aria-label={isFavorite ? 'Remove favorite' : 'Add favorite'}
+                      onClick={() => toggleFavoriteTemplate(template.id)}
+                    >
+                      <Star size={15} aria-hidden="true" fill={isFavorite ? 'currentColor' : 'none'} />
+                    </button>
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+
           <details className="control-section placement-details">
             <summary>
               <span className="section-heading">
@@ -317,18 +523,22 @@ function App() {
               <ChevronDown size={18} aria-hidden="true" />
             </summary>
 
-            <div className="segmented" aria-label="Label slot">
-              {slotOptions.map((option) => (
-                <button
-                  className={settings.slotMode === option.value ? 'selected' : ''}
-                  key={option.value}
-                  type="button"
-                  onClick={() => updateSetting('slotMode', option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            {slotOptions.length > 1 ? (
+              <div className="segmented" aria-label="Label slot">
+                {slotOptions.map((option) => (
+                  <button
+                    className={settings.slotSelection === option.value ? 'selected' : ''}
+                    key={option.value}
+                    type="button"
+                    onClick={() => updateSetting('slotSelection', option.value as SlotSelection)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="slot-readout">{slotOptions[0]?.label ?? 'Label'}</p>
+            )}
 
             <Slider
               label="X offset"
@@ -396,11 +606,17 @@ function App() {
             <dl>
               <div>
                 <dt>Template</dt>
-                <dd>{AVERY_8126_TEMPLATE.name}</dd>
+                <dd>{activeTemplate.name}</dd>
               </div>
               <div>
                 <dt>Page</dt>
-                <dd>8.5 in x 11 in</dd>
+                <dd>{formatSize(activeTemplate.sheetSizeIn)}</dd>
+              </div>
+              <div>
+                <dt>Label</dt>
+                <dd>
+                  {formatSize(activeTemplate.labelSizeIn)}, {activeTemplate.labelsPerSheet} up
+                </dd>
               </div>
               <div>
                 <dt>Rendered</dt>
@@ -422,64 +638,97 @@ function App() {
           <div className="preview-toolbar">
             <span className="preview-title">
               <Move size={16} aria-hidden="true" />
-              Drag label to adjust
+              {previewInstruction}
             </span>
             <div className="preview-actions" aria-label="Preview placement controls">
               <button
                 className="icon-button"
                 type="button"
-                title="Scale down"
-                onClick={() => changeScale(-2.5)}
-                disabled={!source}
+                title="Zoom page out"
+                onClick={() => changePageZoom(-0.1)}
               >
                 <ZoomOut size={16} aria-hidden="true" />
               </button>
               <button
                 className="icon-button"
                 type="button"
-                title="Scale up"
-                onClick={() => changeScale(2.5)}
-                disabled={!source}
+                title="Zoom page in"
+                onClick={() => changePageZoom(0.1)}
               >
                 <ZoomIn size={16} aria-hidden="true" />
               </button>
               <button
                 className="icon-button"
                 type="button"
-                title="Rotate left"
-                onClick={() => changeRotation(-1)}
-                disabled={!source}
+                title="Rotate page left"
+                onClick={() => changePageRotation(-90)}
               >
                 <RotateCcw size={16} aria-hidden="true" />
               </button>
               <button
                 className="icon-button"
                 type="button"
-                title="Rotate right"
-                onClick={() => changeRotation(1)}
-                disabled={!source}
+                title="Rotate page right"
+                onClick={() => changePageRotation(90)}
               >
                 <RotateCw size={16} aria-hidden="true" />
               </button>
             </div>
-            <span>{settings.slotMode === 'both' ? 'Top + bottom' : `${settings.slotMode} slot`}</span>
+            <span>
+              {selectedSlotLabel} · {Math.round(pageZoom * 100)}% · {pageRotationDeg}deg
+            </span>
           </div>
           <div className="sheet-wrap">
-            <canvas
-              ref={canvasRef}
-              className={`sheet-canvas ${source ? 'is-interactive' : ''} ${
-                isMovingLabel ? 'is-moving' : ''
-              }`}
-              onPointerDown={handlePreviewPointerDown}
-              onPointerMove={handlePreviewPointerMove}
-              onPointerUp={finishPreviewDrag}
-              onPointerCancel={finishPreviewDrag}
-              onPointerLeave={(event) => {
-                if (dragStateRef.current) {
-                  finishPreviewDrag(event)
-                }
+            <div
+              className="sheet-stage"
+              style={{
+                width: `min(100%, ${790 * pageZoom}px)`,
+                transform: `rotate(${pageRotationDeg}deg)`,
               }}
-            />
+            >
+              <canvas ref={canvasRef} className="sheet-canvas" />
+              {source && labelFrame ? (
+                <div
+                  className={`transform-box ${isMovingLabel ? 'is-moving' : ''}`}
+                  style={{
+                    left: `${labelFrame.centerXPercent}%`,
+                    top: `${labelFrame.centerYPercent}%`,
+                    width: `${labelFrame.widthPercent}%`,
+                    height: `${labelFrame.heightPercent}%`,
+                    transform: `translate(-50%, -50%) rotate(${labelFrame.rotationDeg}deg)`,
+                  }}
+                  onPointerDown={(event) => startTransformDrag('move', event)}
+                  onPointerMove={handleTransformPointerMove}
+                  onPointerUp={finishPreviewDrag}
+                  onPointerCancel={finishPreviewDrag}
+                  onPointerLeave={(event) => {
+                    if (dragStateRef.current) {
+                      finishPreviewDrag(event)
+                    }
+                  }}
+                >
+                  <button
+                    className="rotate-handle"
+                    type="button"
+                    title="Rotate label"
+                    aria-label="Rotate label"
+                    onPointerDown={(event) => startTransformDrag('rotate', event)}
+                  >
+                    <RotateCw size={14} aria-hidden="true" />
+                  </button>
+                  {scaleHandleNames.map((handle) => (
+                    <button
+                      className={`scale-handle ${handle}`}
+                      key={handle}
+                      type="button"
+                      title="Scale label"
+                      aria-label="Scale label"
+                      onPointerDown={(event) => startTransformDrag('scale', event)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         </section>
       </section>
@@ -535,4 +784,71 @@ const normalizeDegrees = (value: number) => {
   }
 
   return value
+}
+
+const getLabelFrame = (
+  template: TemplateDefinition,
+  settings: PlacementSettings,
+  croppedSize: { width: number; height: number },
+): LabelFrame => {
+  const slot = getActiveSlots(template, settings.slotSelection)[0]
+  const angle = (template.defaultRotationDeg * Math.PI) / 180
+  const rotatedWidth =
+    Math.abs(croppedSize.width * Math.cos(angle)) +
+    Math.abs(croppedSize.height * Math.sin(angle))
+  const rotatedHeight =
+    Math.abs(croppedSize.width * Math.sin(angle)) +
+    Math.abs(croppedSize.height * Math.cos(angle))
+  const fitScale = Math.min(slot.rect.width / rotatedWidth, slot.rect.height / rotatedHeight)
+  const finalScale = fitScale * (settings.scalePercent / 100)
+  const centerXPt = slot.rect.x + slot.rect.width / 2 + settings.offsetXPt
+  const centerYFromBottom = slot.rect.y + slot.rect.height / 2 + settings.offsetYPt
+  const centerYPt = template.page.heightPt - centerYFromBottom
+
+  return {
+    centerXPercent: (centerXPt / template.page.widthPt) * 100,
+    centerYPercent: (centerYPt / template.page.heightPt) * 100,
+    widthPercent: ((croppedSize.width * finalScale) / template.page.widthPt) * 100,
+    heightPercent: ((croppedSize.height * finalScale) / template.page.heightPt) * 100,
+    rotationDeg: settings.rotationDeg,
+  }
+}
+
+const distanceBetween = (
+  a: { xPt: number; yPt: number },
+  b: { xPt: number; yPt: number },
+) => Math.hypot(a.xPt - b.xPt, a.yPt - b.yPt)
+
+const angleBetween = (
+  anchor: { xPt: number; yPt: number },
+  point: { xPt: number; yPt: number },
+) => (Math.atan2(point.yPt - anchor.yPt, point.xPt - anchor.xPt) * 180) / Math.PI
+
+const angleDelta = (fromDeg: number, toDeg: number) => {
+  let delta = toDeg - fromDeg
+
+  while (delta > 180) {
+    delta -= 360
+  }
+
+  while (delta < -180) {
+    delta += 360
+  }
+
+  return delta
+}
+
+const templateMatchesQuery = (template: TemplateDefinition, query: string) => {
+  const haystack = [
+    template.brand,
+    template.name,
+    formatSize(template.labelSizeIn),
+    formatSize(template.sheetSizeIn),
+    `${template.labelsPerSheet} per sheet`,
+    ...template.compatibleWith,
+  ]
+    .join(' ')
+    .toLowerCase()
+
+  return haystack.includes(query)
 }

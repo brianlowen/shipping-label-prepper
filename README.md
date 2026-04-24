@@ -1,6 +1,6 @@
 # Return Label Prepper
 
-A browser-only web app for cropping a return label PDF/image and placing it onto an Avery 8126 two-up shipping label sheet.
+A browser-only web app for cropping a return label PDF/image and placing it onto common print-at-home package shipping label templates.
 
 ## Run
 
@@ -21,5 +21,7 @@ npm run build
 
 - Files are processed locally in the browser.
 - PDF uploads use the first page in v1.
-- Avery 8126 is built in as a US Letter sheet with top and bottom half-sheet slots.
-- Export creates a printable US Letter PDF at 300 DPI.
+- Avery 8126 compatible half-sheet labels are the default template.
+- The template catalog includes parcel-safe 4" x 6", half-sheet, 8" x 5", and full-page options.
+- Template favorites and the last selected template are saved in browser storage.
+- Export creates a printable PDF at 300 DPI using the selected template's page size.
