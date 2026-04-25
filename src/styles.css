@@ -568,6 +568,12 @@ button:disabled {
   background: #f6f8fa;
 }
 
+.icon-button.selected {
+  border-color: #126b63;
+  background: #e9f4f1;
+  color: #0f403d;
+}
+
 .sheet-wrap {
   flex: 1;
   min-height: 0;
@@ -613,6 +619,16 @@ button:disabled {
 
 .transform-box.is-moving {
   cursor: move;
+}
+
+.transform-box.is-cropping {
+  cursor: default;
+}
+
+.transform-box.is-cropping::before {
+  border-color: #d15b38;
+  background:
+    linear-gradient(rgba(209, 91, 56, 0.08), rgba(209, 91, 56, 0.08));
 }
 
 .rotate-handle {
@@ -792,6 +808,160 @@ button:disabled {
 .scale-handle.se::after {
   right: 6px;
   bottom: 3px;
+}
+
+.crop-handle {
+  position: absolute;
+  border: 0;
+  background: transparent;
+}
+
+.crop-handle::before {
+  content: '';
+  position: absolute;
+  background: #d15b38;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8);
+}
+
+.crop-handle.n,
+.crop-handle.s {
+  left: 50%;
+  width: 42px;
+  height: 26px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.crop-handle.n {
+  top: -13px;
+}
+
+.crop-handle.s {
+  bottom: -13px;
+}
+
+.crop-handle.n::before,
+.crop-handle.s::before {
+  left: 4px;
+  top: 10px;
+  width: 34px;
+  height: 6px;
+}
+
+.crop-handle.e,
+.crop-handle.w {
+  top: 50%;
+  width: 26px;
+  height: 42px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.crop-handle.e {
+  right: -13px;
+}
+
+.crop-handle.w {
+  left: -13px;
+}
+
+.crop-handle.e::before,
+.crop-handle.w::before {
+  left: 10px;
+  top: 4px;
+  width: 6px;
+  height: 34px;
+}
+
+.crop-handle.nw,
+.crop-handle.ne,
+.crop-handle.sw,
+.crop-handle.se {
+  width: 34px;
+  height: 34px;
+}
+
+.crop-handle.nw {
+  left: -17px;
+  top: -17px;
+  cursor: nwse-resize;
+}
+
+.crop-handle.ne {
+  right: -17px;
+  top: -17px;
+  cursor: nesw-resize;
+}
+
+.crop-handle.sw {
+  left: -17px;
+  bottom: -17px;
+  cursor: nesw-resize;
+}
+
+.crop-handle.se {
+  right: -17px;
+  bottom: -17px;
+  cursor: nwse-resize;
+}
+
+.crop-handle.nw::before,
+.crop-handle.ne::before,
+.crop-handle.sw::before,
+.crop-handle.se::before {
+  inset: 8px;
+  border-radius: 2px;
+}
+
+.crop-readout {
+  border: 1px solid #e1e7ed;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #445467;
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.crop-readout button {
+  justify-self: start;
+  border: 0;
+  border-radius: 5px;
+  background: #f1f5f8;
+  color: #0f403d;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 20;
+  border: 1px solid #cdd5de;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(24, 36, 48, 0.22);
+  padding: 5px;
+}
+
+.context-menu button {
+  min-width: 92px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #15202b;
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.context-menu button:hover {
+  background: #eef4f6;
 }
 
 .print-frame {

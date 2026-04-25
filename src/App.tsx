@@ -7,6 +7,7 @@ import {
   LayoutTemplate,
   Move,
   Printer,
+  Scissors,
   RefreshCcw,
   RotateCcw,
   RotateCw,
@@ -42,7 +43,9 @@ const DEFAULT_PAGE_ZOOM = 1
 
 const formatPx = (value: number) => `${Math.round(value).toLocaleString()} px`
 const scaleHandleNames = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-type TransformDragType = 'move' | 'scale' | 'rotate'
+const cropHandleNames = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+type TransformDragType = 'move' | 'scale' | 'rotate' | 'crop'
+type InteractionMode = 'place' | 'crop'
 
 interface PreviewDragState {
   type: TransformDragType
@@ -51,6 +54,8 @@ interface PreviewDragState {
   anchor: { xPt: number; yPt: number }
   distance: number
   angleDeg: number
+  cropInsetPx: PlacementSettings['cropInsetPx']
+  cropHandle?: string
 }
 
 interface LabelFrame {
@@ -58,6 +63,8 @@ interface LabelFrame {
   centerYPercent: number
   widthPercent: number
   heightPercent: number
+  widthPt: number
+  heightPt: number
   rotationDeg: number
 }
 
@@ -73,10 +80,13 @@ function App() {
   const [isBusy, setIsBusy] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isMovingLabel, setIsMovingLabel] = useState(false)
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('place')
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [pageZoom, setPageZoom] = useState(DEFAULT_PAGE_ZOOM)
   const [pageRotationDeg, setPageRotationDeg] = useState(0)
   const dragStateRef = useRef<PreviewDragState | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const stageRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const activeTemplate = useMemo(
@@ -101,7 +111,10 @@ function App() {
     settings.slotSelection === ALL_SLOTS_SELECTION
       ? 'All slots'
       : activeTemplate.slots.find((slot) => slot.id === settings.slotSelection)?.name ?? 'Label'
-  const previewInstruction = 'Drag label, handles, or rotate grip'
+  const previewInstruction =
+    interactionMode === 'crop'
+      ? 'Drag crop edges, then exit crop'
+      : 'Drag label, handles, or rotate grip'
 
   const visibleTemplates = useMemo(() => {
     const query = templateQuery.trim().toLowerCase()
@@ -169,12 +182,14 @@ function App() {
     setSettings((current) => ({ ...current, [key]: value }))
   }
 
-  const updateCropInset = (edge: keyof PlacementSettings['cropInsetPx'], value: number) => {
+  const updateCropInsets = (nextInsets: PlacementSettings['cropInsetPx']) => {
     setSettings((current) => ({
       ...current,
       cropInsetPx: {
-        ...current.cropInsetPx,
-        [edge]: value,
+        top: Math.max(0, nextInsets.top),
+        right: Math.max(0, nextInsets.right),
+        bottom: Math.max(0, nextInsets.bottom),
+        left: Math.max(0, nextInsets.left),
       },
     }))
   }
@@ -308,15 +323,23 @@ function App() {
   }
 
   const getPreviewPoint = (clientX: number, clientY: number) => {
-    const canvas = canvasRef.current
-    if (!canvas) {
+    const stage = stageRef.current
+    if (!stage) {
       return null
     }
 
-    const rect = canvas.getBoundingClientRect()
+    const rect = stage.getBoundingClientRect()
+    const centerX = rect.left + rect.width / 2
+    const centerY = rect.top + rect.height / 2
+    const angle = (-pageRotationDeg * Math.PI) / 180
+    const dx = clientX - centerX
+    const dy = clientY - centerY
+    const unrotatedX = dx * Math.cos(angle) - dy * Math.sin(angle) + centerX
+    const unrotatedY = dx * Math.sin(angle) + dy * Math.cos(angle) + centerY
+
     return {
-      xPt: ((clientX - rect.left) / rect.width) * activeTemplate.page.widthPt,
-      yPt: ((clientY - rect.top) / rect.height) * activeTemplate.page.heightPt,
+      xPt: ((unrotatedX - rect.left) / rect.width) * activeTemplate.page.widthPt,
+      yPt: ((unrotatedY - rect.top) / rect.height) * activeTemplate.page.heightPt,
     }
   }
 
@@ -334,6 +357,7 @@ function App() {
   const startTransformDrag = (
     type: TransformDragType,
     event: PointerEvent<HTMLElement>,
+    cropHandle?: string,
   ) => {
     if (!source) {
       return
@@ -360,6 +384,8 @@ function App() {
       anchor,
       distance: Math.max(distanceBetween(point, anchor), 1),
       angleDeg: angleBetween(anchor, point),
+      cropInsetPx: settings.cropInsetPx,
+      cropHandle,
     }
     setIsMovingLabel(true)
   }
@@ -396,6 +422,30 @@ function App() {
         ...current,
         scalePercent: clamp(roundToHalf(nextScale), 70, 130),
       }))
+      return
+    }
+
+    if (dragState.type === 'crop') {
+      const dx = nextPoint.xPt - dragState.point.xPt
+      const dy = nextPoint.yPt - dragState.point.yPt
+      const scaleX = croppedSize ? croppedSize.width / labelFrame!.widthPt : 1
+      const scaleY = croppedSize ? croppedSize.height / labelFrame!.heightPt : 1
+      const nextInsets = { ...dragState.cropInsetPx }
+
+      if (dragState.cropHandle?.includes('n')) {
+        nextInsets.top = roundToStep(dragState.cropInsetPx.top + dy * scaleY, 5)
+      }
+      if (dragState.cropHandle?.includes('s')) {
+        nextInsets.bottom = roundToStep(dragState.cropInsetPx.bottom - dy * scaleY, 5)
+      }
+      if (dragState.cropHandle?.includes('w')) {
+        nextInsets.left = roundToStep(dragState.cropInsetPx.left + dx * scaleX, 5)
+      }
+      if (dragState.cropHandle?.includes('e')) {
+        nextInsets.right = roundToStep(dragState.cropInsetPx.right - dx * scaleX, 5)
+      }
+
+      updateCropInsets(nextInsets)
       return
     }
 
@@ -603,42 +653,21 @@ function App() {
               suffix="px"
               onChange={(value) => updateSetting('cropPaddingPx', value)}
             />
-            <Slider
-              label="Crop top"
-              value={settings.cropInsetPx.top}
-              min={0}
-              max={2000}
-              step={5}
-              suffix="px"
-              onChange={(value) => updateCropInset('top', value)}
-            />
-            <Slider
-              label="Crop right"
-              value={settings.cropInsetPx.right}
-              min={0}
-              max={2000}
-              step={5}
-              suffix="px"
-              onChange={(value) => updateCropInset('right', value)}
-            />
-            <Slider
-              label="Crop bottom"
-              value={settings.cropInsetPx.bottom}
-              min={0}
-              max={2000}
-              step={5}
-              suffix="px"
-              onChange={(value) => updateCropInset('bottom', value)}
-            />
-            <Slider
-              label="Crop left"
-              value={settings.cropInsetPx.left}
-              min={0}
-              max={2000}
-              step={5}
-              suffix="px"
-              onChange={(value) => updateCropInset('left', value)}
-            />
+            <div className="crop-readout">
+              Crop: T {settings.cropInsetPx.top}px · R {settings.cropInsetPx.right}px · B{' '}
+              {settings.cropInsetPx.bottom}px · L {settings.cropInsetPx.left}px
+              <button
+                type="button"
+                onClick={() =>
+                  setSettings((current) => ({
+                    ...current,
+                    cropInsetPx: { top: 0, right: 0, bottom: 0, left: 0 },
+                  }))
+                }
+              >
+                Reset crop
+              </button>
+            </div>
 
             <label className="toggle-row">
               <input
@@ -718,6 +747,19 @@ function App() {
             </span>
             <div className="preview-actions" aria-label="Preview placement controls">
               <button
+                className={`icon-button ${interactionMode === 'crop' ? 'selected' : ''}`}
+                type="button"
+                title={interactionMode === 'crop' ? 'Exit crop mode' : 'Crop label'}
+                aria-pressed={interactionMode === 'crop'}
+                onClick={() => {
+                  setContextMenu(null)
+                  setInteractionMode((current) => (current === 'crop' ? 'place' : 'crop'))
+                }}
+                disabled={!source}
+              >
+                <Scissors size={16} aria-hidden="true" />
+              </button>
+              <button
                 className="icon-button"
                 type="button"
                 title="Zoom page out"
@@ -756,7 +798,16 @@ function App() {
           </div>
           <div className="sheet-wrap">
             <div
+              ref={stageRef}
               className="sheet-stage"
+              onContextMenu={(event) => {
+                if (!source) {
+                  return
+                }
+
+                event.preventDefault()
+                setContextMenu({ x: event.clientX, y: event.clientY })
+              }}
               style={{
                 width: `min(100%, ${790 * pageZoom}px)`,
                 transform: `rotate(${pageRotationDeg}deg)`,
@@ -765,7 +816,9 @@ function App() {
               <canvas ref={canvasRef} className="sheet-canvas" />
               {source && labelFrame ? (
                 <div
-                  className={`transform-box ${isMovingLabel ? 'is-moving' : ''}`}
+                  className={`transform-box ${
+                    interactionMode === 'crop' ? 'is-cropping' : ''
+                  } ${isMovingLabel ? 'is-moving' : ''}`}
                   style={{
                     left: `${labelFrame.centerXPercent}%`,
                     top: `${labelFrame.centerYPercent}%`,
@@ -773,7 +826,11 @@ function App() {
                     height: `${labelFrame.heightPercent}%`,
                     transform: `translate(-50%, -50%) rotate(${labelFrame.rotationDeg}deg)`,
                   }}
-                  onPointerDown={(event) => startTransformDrag('move', event)}
+                  onPointerDown={(event) => {
+                    if (interactionMode === 'place') {
+                      startTransformDrag('move', event)
+                    }
+                  }}
                   onPointerMove={handleTransformPointerMove}
                   onPointerUp={finishPreviewDrag}
                   onPointerCancel={finishPreviewDrag}
@@ -783,28 +840,59 @@ function App() {
                     }
                   }}
                 >
-                  <button
-                    className="rotate-handle"
-                    type="button"
-                    title="Rotate label"
-                    aria-label="Rotate label"
-                    onPointerDown={(event) => startTransformDrag('rotate', event)}
-                  >
-                    <RotateCw size={14} aria-hidden="true" />
-                  </button>
-                  {scaleHandleNames.map((handle) => (
-                    <button
-                      className={`scale-handle ${handle}`}
-                      key={handle}
-                      type="button"
-                      title="Scale label"
-                      aria-label="Scale label"
-                      onPointerDown={(event) => startTransformDrag('scale', event)}
-                    />
-                  ))}
+                  {interactionMode === 'place' ? (
+                    <>
+                      <button
+                        className="rotate-handle"
+                        type="button"
+                        title="Rotate label"
+                        aria-label="Rotate label"
+                        onPointerDown={(event) => startTransformDrag('rotate', event)}
+                      >
+                        <RotateCw size={14} aria-hidden="true" />
+                      </button>
+                      {scaleHandleNames.map((handle) => (
+                        <button
+                          className={`scale-handle ${handle}`}
+                          key={handle}
+                          type="button"
+                          title="Scale label"
+                          aria-label="Scale label"
+                          onPointerDown={(event) => startTransformDrag('scale', event)}
+                        />
+                      ))}
+                    </>
+                  ) : (
+                    cropHandleNames.map((handle) => (
+                      <button
+                        className={`crop-handle ${handle}`}
+                        key={handle}
+                        type="button"
+                        title="Crop label"
+                        aria-label="Crop label"
+                        onPointerDown={(event) => startTransformDrag('crop', event, handle)}
+                      />
+                    ))
+                  )}
                 </div>
               ) : null}
             </div>
+            {contextMenu ? (
+              <div
+                className="context-menu"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInteractionMode('crop')
+                    setContextMenu(null)
+                  }}
+                >
+                  Crop
+                </button>
+              </div>
+            ) : null}
           </div>
         </section>
       </section>
@@ -849,6 +937,7 @@ export default App
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 const roundToHalf = (value: number) => Math.round(value * 2) / 2
+const roundToStep = (value: number, step: number) => Math.round(value / step) * step
 
 const normalizeDegrees = (value: number) => {
   if (value > 180) {
@@ -886,6 +975,8 @@ const getLabelFrame = (
     centerYPercent: (centerYPt / template.page.heightPt) * 100,
     widthPercent: ((croppedSize.width * finalScale) / template.page.widthPt) * 100,
     heightPercent: ((croppedSize.height * finalScale) / template.page.heightPt) * 100,
+    widthPt: croppedSize.width * finalScale,
+    heightPt: croppedSize.height * finalScale,
     rotationDeg: settings.rotationDeg,
   }
 }
