@@ -1,6 +1,6 @@
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import type { LabelSource, PixelBounds } from './types'
+import type { CropInsetPx, LabelSource, PixelBounds } from './types'
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -24,22 +24,43 @@ export const getCroppedCanvas = (
   canvas: HTMLCanvasElement,
   bounds: PixelBounds,
   paddingPx: number,
+  cropInsetPx: CropInsetPx = { top: 0, right: 0, bottom: 0, left: 0 },
 ) => {
-  const cropX = Math.max(0, Math.floor(bounds.x - paddingPx))
-  const cropY = Math.max(0, Math.floor(bounds.y - paddingPx))
-  const cropRight = Math.min(canvas.width, Math.ceil(bounds.x + bounds.width + paddingPx))
-  const cropBottom = Math.min(canvas.height, Math.ceil(bounds.y + bounds.height + paddingPx))
-  const cropWidth = Math.max(1, cropRight - cropX)
-  const cropHeight = Math.max(1, cropBottom - cropY)
+  const crop = getCropRect(canvas, bounds, paddingPx, cropInsetPx)
 
   const cropped = document.createElement('canvas')
-  cropped.width = cropWidth
-  cropped.height = cropHeight
+  cropped.width = crop.width
+  cropped.height = crop.height
 
   const ctx = requiredContext(cropped)
-  ctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
+  ctx.drawImage(canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height)
 
   return cropped
+}
+
+export const getCropRect = (
+  canvas: HTMLCanvasElement,
+  bounds: PixelBounds,
+  paddingPx: number,
+  cropInsetPx: CropInsetPx,
+): PixelBounds => {
+  const cropX = Math.max(0, Math.floor(bounds.x - paddingPx + cropInsetPx.left))
+  const cropY = Math.max(0, Math.floor(bounds.y - paddingPx + cropInsetPx.top))
+  const cropRight = Math.min(
+    canvas.width,
+    Math.ceil(bounds.x + bounds.width + paddingPx - cropInsetPx.right),
+  )
+  const cropBottom = Math.min(
+    canvas.height,
+    Math.ceil(bounds.y + bounds.height + paddingPx - cropInsetPx.bottom),
+  )
+
+  return {
+    x: cropX,
+    y: cropY,
+    width: Math.max(1, cropRight - cropX),
+    height: Math.max(1, cropBottom - cropY),
+  }
 }
 
 export const supportsFile = (file: File) => {

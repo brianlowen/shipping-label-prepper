@@ -15,6 +15,7 @@ export const getDefaultSettings = (templateId = DEFAULT_TEMPLATE_ID): PlacementS
     scalePercent: 100,
     rotationDeg: template.defaultRotationDeg,
     cropPaddingPx: 8,
+    cropInsetPx: { top: 0, right: 0, bottom: 0, left: 0 },
     showGuides: true,
   }
 }
@@ -44,6 +45,10 @@ export const loadSettings = (): PlacementSettings => {
     return {
       ...defaultSettings,
       ...parsed,
+      cropInsetPx: {
+        ...defaultSettings.cropInsetPx,
+        ...parsed.cropInsetPx,
+      },
       templateId: template.id,
       slotSelection,
     }

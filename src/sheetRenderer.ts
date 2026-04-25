@@ -48,6 +48,7 @@ export const renderSheetToCanvas = (
       source.renderedCanvas,
       source.detectedBounds,
       settings.cropPaddingPx,
+      settings.cropInsetPx,
     )
 
     for (const slot of getActiveSlots(template, settings.slotSelection)) {

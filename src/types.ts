@@ -44,6 +44,13 @@ export interface PixelBounds {
   height: number
 }
 
+export interface CropInsetPx {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
 export interface LabelSource {
   fileName: string
   fileType: string
@@ -59,6 +66,7 @@ export interface PlacementSettings {
   scalePercent: number
   rotationDeg: number
   cropPaddingPx: number
+  cropInsetPx: CropInsetPx
   showGuides: boolean
 }
 

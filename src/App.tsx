@@ -17,7 +17,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { loadLabelSource, supportsFile } from './labelProcessing'
+import { getCropRect, loadLabelSource, supportsFile } from './labelProcessing'
 import {
   ALL_SLOTS_SELECTION,
   TEMPLATE_CATALOG,
@@ -126,11 +126,14 @@ function App() {
       return null
     }
 
-    const pad = settings.cropPaddingPx
-    const width = Math.min(source.renderedCanvas.width, source.detectedBounds.width + pad * 2)
-    const height = Math.min(source.renderedCanvas.height, source.detectedBounds.height + pad * 2)
-    return { width, height }
-  }, [settings.cropPaddingPx, source])
+    const crop = getCropRect(
+      source.renderedCanvas,
+      source.detectedBounds,
+      settings.cropPaddingPx,
+      settings.cropInsetPx,
+    )
+    return { width: crop.width, height: crop.height }
+  }, [settings.cropInsetPx, settings.cropPaddingPx, source])
 
   const labelFrame = useMemo(() => {
     if (!source || !croppedSize) {
@@ -164,6 +167,16 @@ function App() {
     value: PlacementSettings[Key],
   ) => {
     setSettings((current) => ({ ...current, [key]: value }))
+  }
+
+  const updateCropInset = (edge: keyof PlacementSettings['cropInsetPx'], value: number) => {
+    setSettings((current) => ({
+      ...current,
+      cropInsetPx: {
+        ...current.cropInsetPx,
+        [edge]: value,
+      },
+    }))
   }
 
   const handleFiles = async (files: FileList | File[]) => {
@@ -589,6 +602,42 @@ function App() {
               step={1}
               suffix="px"
               onChange={(value) => updateSetting('cropPaddingPx', value)}
+            />
+            <Slider
+              label="Crop top"
+              value={settings.cropInsetPx.top}
+              min={0}
+              max={2000}
+              step={5}
+              suffix="px"
+              onChange={(value) => updateCropInset('top', value)}
+            />
+            <Slider
+              label="Crop right"
+              value={settings.cropInsetPx.right}
+              min={0}
+              max={2000}
+              step={5}
+              suffix="px"
+              onChange={(value) => updateCropInset('right', value)}
+            />
+            <Slider
+              label="Crop bottom"
+              value={settings.cropInsetPx.bottom}
+              min={0}
+              max={2000}
+              step={5}
+              suffix="px"
+              onChange={(value) => updateCropInset('bottom', value)}
+            />
+            <Slider
+              label="Crop left"
+              value={settings.cropInsetPx.left}
+              min={0}
+              max={2000}
+              step={5}
+              suffix="px"
+              onChange={(value) => updateCropInset('left', value)}
             />
 
             <label className="toggle-row">
